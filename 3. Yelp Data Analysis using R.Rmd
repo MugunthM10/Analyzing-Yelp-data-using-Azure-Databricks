@@ -1,0 +1,1300 @@
+
+---
+title: "a-very-extensive-data-analysis-of-yelp"
+output:
+  html_document:
+    toc: true
+---
+
+
+```{r}
+%md
+#Introduction
+
+>
+This dataset is a subset of Yelp's businesses, reviews, and user data. It was originally put together for the Yelp Dataset Challenge which is a chance for students to conduct research or analysis on Yelp's data and share their discoveries. In the dataset you'll find information about businesses across 11 metropolitan areas in four countries. 
+
+For a city we spot the most popular business and also provide a map of the city of Philadelphia with the business identified as dots in the map. We have analysed **Philadelphia , Tampa and Toronto**.For Toronto city, we also do Word Cloud, detailed Sentiment Analysis and Topic Modelling.    
+
+
+For a business we do the following analysis
+
+* Word Cloud of the reviews of the business                        
+* Top Ten most common Words reviews of the business                        
+* Sentiment Analysis - Postive and Not So Postive Words of reviews                 
+* Calculate Sentiment for the reviews                      
+* Negative Reviews                    
+* Positive Reviews                        
+* Most Common Bigrams (*a collection of Two words*)  in the review text              
+* Relationship among words                      
+* Relationship of words with an **important** word in the review such as steak, crab, food     
+* Topic Modelling of the reviews         
+
+
+The business that we are analysing are
+
+**Luke** , a **New Oreleans** Restaurant , the most popular and highly rated restaurants\
+**Prep & Pastry** , the Second most popular and highly rated **Tuscon** Restaurant\
+**Ichicoro Ramen** , one of the most popular **Tampa** restaurant\
+**Bestio Mexican Restaurant in Tampa**
+**Sachiko Sushi in Tuscon**   
+
+
+     
+
+
+<hr/>
+
+**How Sentiment Analysis can help your business ?**
+
+<hr/>
+
+
+For a business, the **Sentiment Analysis** is very important. If the business owners can just see the Top Ten negative reviews, they can easily find out which aspect of the business they need to improve.    
+
+<hr/>
+
+**How Topic Modelling can help understand your business and city ?**
+
+<hr/>
+
+Topic modelling helps to pick specific topics from the huge volume of text. Topic Modelling on the Three popular restaurants and also on Phoenix City helps us to understand that complaints regarding restaurants and business is around **Service**       
+
+
+
+#Preparation{.tabset .tabset-fade .tabset-pills}
+
+##Load Libraries
+```
+
+
+```{r}
+library(tidyverse) #  data manipulation and graphs
+library(stringr) #  string manipulation
+library(lubridate) #  date manipulation
+library(wordcloud) #  wordcloud
+library(tidytext) # tidy implementation of NLP methods
+library(DT)       # table format display of data
+library(leaflet) # maps
+
+library(igraph) #  graphs
+library(ggraph) #  graphs
+
+library(topicmodels) # for LDA topic modelling 
+library(tm) # general text mining functions, making document term matrixes
+library(SnowballC) # for stemming
+library(flextable)
+library(textcat)
+```
+##Read the data
+
+```{r}
+rm(list=ls())
+library(jsonlite)
+
+fillColor = "#FFA07A"
+fillColor2 = "#F1C40F"
+
+#If you want the delta file from blob storage as dataframe
+
+# business <- read.df("dbfs:/mnt/m10pro/parquet_to_delta/business.delta", source = "delta")
+# reviews <- read.df("dbfs:/mnt/m10pro/parquet_to_delta/review.delta", source = "delta")
+
+#If you want the delta file from blob storage as dataframe
+
+reviews_json <- stream_in(file("C:/Users/mugun/Downloads/Final Year project/yelp open source dataset/Yelp Dataset/yelp_academic_dataset_review.json"))
+
+business_json <- stream_in(file("C:/Users/mugun/Downloads/Final Year project/yelp open source dataset/Yelp Dataset/yelp_academic_dataset_business.json"))
+
+reviews <- as.data.frame(reviews_json)
+business <- as.data.frame(business_json)
+```
+
+
+#Business data
+
+```{r}
+datatable(head(business), style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+```
+#Reviews data
+
+A glimpse of the reviews data
+
+```{r}
+glimpse(reviews)
+```
+
+
+#Detecting the language of the reviews
+
+Detecting the language of the first Ten reviews.
+
+```{r}
+textcat(reviews[1:10,]$text)
+```
+#Most Popular Categories
+
+The most popular categories of business are plotted in the bar plot
+
+```{r}
+categories = str_split(business$categories,";")
+categories = as.data.frame(unlist(categories))
+colnames(categories) = c("Name")
+
+categories %>%
+  group_by(Name) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Name = reorder(Name,Count)) %>%
+  head(10) %>%
+  
+  
+  ggplot(aes(x = Name,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor2) +
+  geom_text(aes(x = Name, y = 1, label = paste0("(",Count,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Name of Category', y = 'Count', 
+       title = 'Top 10 Categories of Business') +
+  coord_flip() + 
+  theme_bw()
+```
+
+#Top Ten Cities with the most Business parties mentioned in Yelp
+
+We show the Top Ten Cities which has the most Business parties mentioned in Yelp
+
+```{r}
+business %>%
+  group_by(city) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(City = reorder(city,Count)) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = City,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = City, y = 1, label = paste0("(",round(Count/1e3)," K )",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'City', y = 'Count of Reviews', 
+       title = 'Top Ten Cities with the most Business parties in Yelp') +
+  coord_flip() + 
+  theme_bw()
+```
+
+
+#Business with most Five Star Reviews from Users
+
+The following plot shows the names of business with the most Five Star Reviews.**Luke**  and **Prep & Pastry** are the Two most popular restaurants from the Yelp reviews with **Five Star** ratings. We will do a deep dive for these restaurants.
+
+```{r}
+most5StarsReviews = reviews %>%
+  filter(stars == 5) %>%
+  group_by(business_id) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(BusinessID = reorder(business_id,Count)) %>%
+  head(10)
+
+most5StarsReviews = inner_join(most5StarsReviews,business)
+
+most5StarsReviews %>%
+  mutate(name = reorder(name,Count)) %>%
+  ggplot(aes(x = name,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill = fillColor) +
+  geom_text(aes(x = name, y = 1, label = paste0("(",Count,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Name of the Business', 
+       y = 'Count', 
+       title = 'Name of the Business and Count') +
+  coord_flip() +
+  theme_bw()
+```
+
+#**"Luke"**
+
+The location and category of the most liked business **Luke** is shown below
+
+```{r}
+luke = business %>% filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw") %>%
+  select(name,city,state,postal_code,categories)
+
+datatable(head(luke), style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+```
+##Useful,funny,cool reviews
+
+The following plot describes the number of **Useful, Funny and Cool** reviews.Most of the reviews are NOT useful , funny or cool.
+
+```{r}
+luke_reviews = reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw")
+
+luke_reviews %>%
+  group_by(useful) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(useful = reorder(useful,Count)) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = useful,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill = fillColor) +
+  geom_text(aes(x = useful, y = 1, label = paste0("(",Count,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Useful Reviews', 
+       y = 'Count', 
+       title = 'Useful Reviews and Count') +
+  coord_flip() +
+   theme_bw()
+
+
+luke_reviews %>%
+  group_by(funny) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(funny = reorder(funny,Count)) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = funny,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill = fillColor2) +
+  geom_text(aes(x = funny, y = 1, label = paste0("(",Count,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Funny Reviews', 
+       y = 'Count', 
+       title = 'Funny Reviews and Count') +
+  coord_flip() +
+   theme_bw()
+
+
+luke_reviews %>%
+  group_by(cool) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(cool = reorder(cool,Count)) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = cool,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill = fillColor) +
+  geom_text(aes(x = cool, y = 1, label = paste0("(",Count,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Cool Reviews', 
+       y = 'Count', 
+       title = 'Cool Reviews and Count') +
+  coord_flip() +
+   theme_bw()
+```
+## Word Cloud of Luke
+
+A word cloud is a graphical representation of frequently used words in the text. The height of each word in this picture is an indication of frequency of occurrence of the word in the entire text. The words `steak, service, vegas,french,patio,bellagio,delicious, nice` are the words which have been used very frequently in the **reviews**.Note that if we choose a word which is not food related , it is **Service** and we will see in the subsequent sections of `sentiment analysis` and `topic modelling` , why this `keyword` is important.
+
+```{r}
+createWordCloud = function(train)
+{
+  train %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  count(word,sort = TRUE) %>%
+  ungroup()  %>%
+  head(30) %>%
+  
+  with(wordcloud(word, n, max.words = 30,colors=brewer.pal(8, "Dark2")))
+}
+
+createWordCloud(reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw"))
+```
+##Top Ten most common Words of the business **"Luke"**
+
+We examine the Top Ten Most Common words and show them in a bar graph. The words `steak, service, vegas,french,patio,bellagio,delicious, nice` are the words which have been used very frequently in the **reviews**.
+
+```{r}
+reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw") %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+## Sentiment Analysis - Postive and Not So Postive Words of **luke**
+
+We display the Positive and Not So Positive words used by reviewers for the business `Mon Ami Gabi`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+`Breathtaking,funnier,fun,fantastic,fabulous,ecstatic,brilliant,awesome,amazing` are some of the postive words that we have seen in the reviews of the business.
+
+```{r}
+positiveWordsBarGraph <- function(SC) {
+  contributions <- SC %>%
+    unnest_tokens(word, text) %>%
+    count(word,sort = TRUE) %>%
+    ungroup() %>%
+    
+    inner_join(get_sentiments("afinn"), by = "word") %>%
+    group_by(word) %>%
+    summarize(occurences = n(),
+              contribution = sum(value))
+  
+  contributions %>%
+    top_n(20, abs(contribution)) %>%
+    mutate(word = reorder(word, contribution)) %>%
+    head(20) %>%
+    ggplot(aes(word, contribution, fill = contribution > 0)) +
+    geom_col(show.legend = FALSE) +
+    coord_flip() + theme_bw()
+}
+
+positiveWordsBarGraph(reviews %>%
+                        filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw"))
+```
+## Calculate Sentiment for the reviews
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+calculate_sentiment <- function(review_text)
+{
+  sentiment_lines  =  review_text %>%
+                  filter(textcat(text) == "english") %>%  # considering only English text
+                  unnest_tokens(word, text) %>%
+                  inner_join(get_sentiments("afinn"), by = "word") %>%
+                  group_by(review_id) %>%
+                  summarize(sentiment = mean(value),words = n()) %>%
+                  ungroup() %>%
+                  filter(words >= 5) 
+
+  return(sentiment_lines)
+  
+}
+
+
+sentiment_lines = calculate_sentiment(luke_reviews)
+
+head(sentiment_lines)
+```
+
+
+## Negative Reviews
+
+We examine the  Top Ten most negative reviews. The complaints were about **Service**
+```{r}
+display_neg_sentiments <- function(sentiment_lines,review_text)
+{
+  neg_sentiment_lines = sentiment_lines %>%
+  arrange(desc(sentiment))  %>%
+  top_n(-10, sentiment) %>%
+  inner_join(review_text, by = "review_id") %>%
+  select(date,sentiment,text) 
+  
+datatable(neg_sentiment_lines, style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+}
+
+display_neg_sentiments(sentiment_lines,luke_reviews)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most positive reviews.
+
+```{r}
+display_pos_sentiments <- function(sentiment_lines,review_text)
+{
+  pos_sentiment_lines = sentiment_lines %>%
+  arrange(desc(sentiment))  %>%
+  top_n(10, sentiment) %>%
+  inner_join(review_text, by = "review_id") %>%
+  select(date,sentiment,text) 
+  
+datatable(pos_sentiment_lines, style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+
+}
+
+display_pos_sentiments(sentiment_lines,luke_reviews)
+```
+
+
+
+## Most Common Bigrams of **"Luke"**
+
+A Bigram is a collection of Two words. We examine the most common Bigrams and plot them in a bar plot.
+
+```{r}
+count_bigrams <- function(dataset) {
+  dataset %>%
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+    separate(bigram, c("word1", "word2"), sep = " ") %>%
+    filter(!word1 %in% stop_words$word,
+           !word2 %in% stop_words$word) %>%
+    count(word1, word2, sort = TRUE)
+}
+
+
+visualize_bigrams <- function(bigrams) {
+  set.seed(2016)
+  a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+  
+  bigrams %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a) +
+    geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+    theme_void()
+  
+}
+
+visualize_bigrams_individual <- function(bigrams) {
+  set.seed(2016)
+  a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+  
+  bigrams %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a,end_cap = circle(.07, 'inches')) +
+    geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+    theme_void()
+}
+
+
+reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw") %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+  select(bigram,review_id) %>%
+  head(10)
+
+
+reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw") %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word1 %in% c("luke")) %>%
+  unite(bigramWord, word1,sep = " ") %>%
+  group_by(bigramWord) %>%
+  tally() %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  mutate(bigramWord = reorder(bigramWord,n)) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = bigramWord,y = n)) +
+  geom_bar(stat='identity',colour="white", fill = fillColor2) +
+  geom_text(aes(x = bigramWord, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Bigram', 
+       y = 'Count', 
+       title = 'Bigram and Count') +
+  coord_flip() + 
+  theme_bw()
+```
+
+##Relationship among words
+
+We explore the different relationship among the various words in `Luke` reviews here through a network graph
+
+```{r}
+bigramsLuke <- reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw") %>%
+  count_bigrams()
+
+bigramsLuke %>%
+  filter(n > 50) %>%
+  visualize_bigrams()
+```
+###Relationship of words with **chicken**
+
+The following network diagram shows the words associated with the word **chicken**
+
+```{r}
+bigramsLuke %>%
+  filter(word1 == "chicken" | word2 == "chicken") %>%
+  filter(n > 20) %>%
+  visualize_bigrams()
+```
+###Relationship of words with **french**
+
+The following network diagram shows the words associated with the word **french**
+
+```{r}
+bigramsLuke %>%
+  filter(word1 == "french" | word2 == "french" ) %>%
+  filter(n > 20) %>%
+  visualize_bigrams()
+```
+# **Prep & Pastry**
+
+The location and category of the most liked business **Prep & Pastry** is shown below
+
+```{r}
+prep = business %>% filter(business_id == "UCMSWPqzXjd7QHq7v8PJjQ") %>%
+  select(name,city,state,postal_code,categories)
+
+datatable(head(prep), style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+```
+## Word Cloud of **Prep & Pastry**
+
+```{r}
+prep = reviews %>% filter(business_id == "UCMSWPqzXjd7QHq7v8PJjQ")
+
+createWordCloud(prep)
+```
+
+##Top Ten most common Words of the business **"Prep & Pastry"**
+
+We examine the Top Ten Most Common words and show them in a bar graph.
+
+```{r}
+prep %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+## Sentiment Analysis - Postive and Not So Postive Words of **Prep & Pastry**
+
+We display the Positive and Not So Positive words used by reviewers for the business `Bacchanal Buffet`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+```{r}
+positiveWordsBarGraph(prep)
+```
+## Calculate Sentiment for the reviews
+
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+sentiment_lines = calculate_sentiment(prep)
+
+head(sentiment_lines)
+```
+
+
+## Negative Reviews
+
+We examine the  Top Ten most negative reviews.
+
+```{r}
+display_neg_sentiments(sentiment_lines,prep)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most postive reviews.
+
+```{r}
+display_pos_sentiments(sentiment_lines,prep)
+```
+
+
+##Relationship among words in Prep & Pastry
+
+We explore the different relationship among the various words in `Prep & Pastry` here through a network graph
+
+```{r}
+bigrams_prep <- prep %>%
+  count_bigrams()
+
+bigrams_prep %>%
+  filter(n > 30) %>%
+  visualize_bigrams()
+```
+###Relationship of words with **egg**
+
+The following network diagram shows the words associated with the word **egg**
+
+```{r}
+bigramsLuke %>%
+  filter(word1 == "egg" | word2 == "egg" ) %>%
+  visualize_bigrams()
+```
+###Relationship of words with **food**
+
+The following network diagram shows the words associated with the word **food**
+
+```{r}
+bigramsLuke %>%
+  filter(word1 == "food" | word2 == "food" ) %>%
+  filter(n > 10) %>%
+  visualize_bigrams()
+```
+#Map of the business parties in Philadelphia
+
+```{r}
+PhiladelphiaCoords = business %>% filter(city == "Philadelphia")
+
+center_lon = median(PhiladelphiaCoords$longitude,na.rm = TRUE)
+center_lat = median(PhiladelphiaCoords$latitude,na.rm = TRUE)
+
+leaflet(PhiladelphiaCoords) %>% addProviderTiles("Esri.NatGeoWorldMap") %>%
+  addCircles(lng = ~longitude, lat = ~latitude,radius = ~sqrt(review_count))  %>%
+  
+  # controls
+  setView(lng=center_lon, lat=center_lat,zoom = 13)
+```
+
+#Top Ten Business in Philadelphia
+
+We list the Top Ten business in Philadelphia giving importance to the number of reviews and then to the number of stars obtained by the business.
+
+```{r}
+phil_biz = business %>%
+  filter(city == "Philadelphia") %>%
+  arrange(desc(review_count),desc(stars)) %>%
+  select(name,address,review_count,stars) %>%
+  head(10)
+
+datatable(phil_biz, style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+```
+
+
+# **	El Vez**
+
+##Word Cloud of business **	El Vez**
+
+```{r}
+createWordCloud(reviews %>%
+  filter(business_id == "d_tRshM-w6S4QxE4VVi8tQ"))
+```
+
+##Ten most common words used in reviews of business **El vez**
+
+We examine the Top Ten Most Common words and show them in a bar graph.
+
+```{r}
+reviews %>%
+  filter(business_id == "d_tRshM-w6S4QxE4VVi8tQ") %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+
+## Sentiment Analysis - Postive and Not So Postive Words of **El Vez**
+
+We display the Positive and Not So Positive words used by reviewers for the business `El Vez`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+```{r}
+positiveWordsBarGraph(reviews %>%
+                        filter(business_id == "d_tRshM-w6S4QxE4VVi8tQ"))
+```
+
+## Calculate Sentiment for the reviews
+
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+ramen = reviews %>%
+          filter(business_id == "d_tRshM-w6S4QxE4VVi8tQ")
+
+sentiment_lines = calculate_sentiment(ramen)
+
+head(sentiment_lines)
+```
+
+
+## Negative Reviews
+
+We examine the Top 10 most negative reviews.
+
+```{r}
+display_neg_sentiments(sentiment_lines,ramen)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most postive reviews.
+
+```{r}
+display_pos_sentiments(sentiment_lines,ramen)
+```
+
+##Relationship among words in **El Vez**
+
+We explore the different relationship among the various words in `El Vez` here through a network graph
+
+```{r}
+bigrams_vez <- reviews %>%
+  filter(business_id == "d_tRshM-w6S4QxE4VVi8tQ") %>%
+  count_bigrams()
+
+bigrams_vez %>%
+  filter(n > 20) %>%
+  visualize_bigrams()
+```
+###Relationship of words with **El vez**
+
+The following network diagram shows the words associated with the word **ramen**
+
+```{r}
+bigrams_vez %>%
+  filter(word1 == "tuna" | word2 == "tuna" ) %>%
+  filter(n > 5) %>%
+  visualize_bigrams()
+```
+
+#Top Ten Business in Tampa
+
+We list the Top Ten business in Tampa giving importance to the number of reviews and then to the number of stars obtained by the business.
+
+```{r}
+tampa_biz = business %>%
+  filter(city == "Tampa") %>%
+  arrange(desc(review_count),desc(stars)) %>%
+  select(name,address,review_count,stars) %>%
+  head(10)
+
+datatable(tampa_biz, style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+```
+
+
+# **	Ichicoro Ramen**
+
+##Word Cloud of business **	Ichicoro Ramen**
+
+```{r}
+createWordCloud(reviews %>%
+  filter(business_id == "nFjk0xVI9fNiVN__5g-m8Q"))
+```
+
+##Ten most common words used in reviews of business **Ichicoro Ramen**
+
+We examine the Top Ten Most Common words and show them in a bar graph.
+
+```{r}
+reviews %>%
+  filter(business_id == "nFjk0xVI9fNiVN__5g-m8Q") %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+
+## Sentiment Analysis - Postive and Not So Postive Words of **Ichicoro Ramen**
+
+We display the Positive and Not So Positive words used by reviewers for the business `Ichicoro Ramen`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+```{r}
+positiveWordsBarGraph(reviews %>%
+                        filter(business_id == "nFjk0xVI9fNiVN__5g-m8Q"))
+```
+
+## Calculate Sentiment for the reviews
+
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+ramen = reviews %>%
+          filter(business_id == "nFjk0xVI9fNiVN__5g-m8Q")
+
+sentiment_lines = calculate_sentiment(ramen)
+
+head(sentiment_lines)
+```
+
+
+## Negative Reviews
+
+We examine the Top 10 most negative reviews.
+
+```{r}
+display_neg_sentiments(sentiment_lines,ramen)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most postive reviews.
+
+```{r}
+display_pos_sentiments(sentiment_lines,ramen)
+```
+
+##Relationship among words in **Ichicoro Ramen**
+
+We explore the different relationship among the various words in `Ichicoro Ramen` here through a network graph
+
+```{r}
+bigrams_ramen <- reviews %>%
+  filter(business_id == "nFjk0xVI9fNiVN__5g-m8Q") %>%
+  count_bigrams()
+
+bigrams_ramen %>%
+  filter(n > 20) %>%
+  visualize_bigrams()
+```
+###Relationship of words with **ramen**
+
+The following network diagram shows the words associated with the word **ramen**
+
+```{r}
+bigrams_ramen %>%
+  filter(word1 == "ramen" | word2 == "ramen" ) %>%
+  filter(n > 5) %>%
+  visualize_bigrams()
+```
+
+# **Besito Mexican Restaurant**
+
+```{r}
+bestio_mex_biz = business %>%
+  filter(str_detect(name,"Besito Mexican Restaurant") )%>%
+  arrange(desc(review_count),desc(stars))
+
+datatable(head(bestio_mex_biz), style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+```
+
+# Besito Mexican Restaurant
+
+##Word Cloud of business **Besito Mexican Restaurant**
+
+```{r}
+
+bestio_mex = reviews %>%
+  filter(business_id == "KP5OncF2jhT7_J1phHPPww")
+
+createWordCloud(bestio_mex)
+```
+
+##Top Ten most common Words of the business **"Besito Mexican Restaurant"**
+
+We examine the Top Ten Most Common words and show them in a bar graph.
+
+```{r}
+bestio_mex %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+## Sentiment Analysis - Postive and Not So Postive Words of **Besito Mexican Restaurant**
+
+We display the Positive and Not So Positive words used by reviewers for the business `Besito Mexican Restaurant`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+```{r}
+positiveWordsBarGraph(bestio_mex)
+```
+## Calculate Sentiment for the reviews
+
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+sentiment_lines = calculate_sentiment(bestio_mex)
+
+head(sentiment_lines)
+```
+
+
+## Negative Reviews
+
+We examine the Top Ten most negative reviews.
+
+```{r}
+display_neg_sentiments(sentiment_lines,bestio_mex)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most postive reviews.
+
+```{r}
+display_pos_sentiments(sentiment_lines,bestio_mex)
+```
+
+##Relationship among words in Besito Mexican Restaurant
+
+We explore the different relationship among the various words in `Besito Mexican Restaurant` here through a network graph
+
+```{r}
+bigrams_bestio_mex <- bestio_mex %>%
+  count_bigrams()
+
+bigrams_bestio_mex %>%
+  filter(n > 10) %>%
+  visualize_bigrams()
+```
+
+
+#Topic Modelling   
+
+
+Topic modeling is a method for **unsupervised classification of documents**, similar to clustering on numeric data, which finds natural groups of items even when we’re not sure what we’re looking for.
+
+**Latent Dirichlet allocation (LDA)** is a particularly popular method for fitting a topic model. It treats each document as a mixture of topics, and each topic as a mixture of words. This allows documents to “overlap” each other in terms of content, rather than being separated into discrete groups, in a way that mirrors typical use of natural language.
+
+##LDA Function
+
+```{r}
+# function to get & plot the most informative terms by a specificed number
+# of topics, using LDA
+top_terms_by_topic_LDA <- function(input_text, # should be a columm from a dataframe
+                                   plot = T, # return a plot? TRUE by defult
+                                   number_of_topics = 4) # number of topics (4 by default)
+{    
+    # create a corpus (type of object expected by tm) and document term matrix
+    Corpus <- Corpus(VectorSource(input_text)) # make a corpus object
+    DTM <- DocumentTermMatrix(Corpus) # get the count of words/document
+
+    # remove any empty rows in our document term matrix (if there are any 
+    # we'll get an error when we try to run our LDA)
+    unique_indexes <- unique(DTM$i) # get the index of each unique value
+    DTM <- DTM[unique_indexes,] # get a subset of only those indexes
+    
+    # preform LDA & get the words/topic in a tidy text format
+    lda <- LDA(DTM, k = number_of_topics, control = list(seed = 1234))
+    topics <- tidy(lda, matrix = "beta")
+
+    # get the top ten terms for each topic
+    top_terms <- topics  %>% # take the topics data frame and..
+      group_by(topic) %>% # treat each topic as a different group
+      top_n(10, beta) %>% # get the top 10 most informative words
+      ungroup() %>% # ungroup
+      arrange(topic, -beta) # arrange words in descending informativeness
+
+    # if the user asks for a plot (TRUE by default)
+    if(plot == T){
+        # plot the top ten terms for each topic in order
+        top_terms %>% # take the top terms
+          mutate(term = reorder(term, beta)) %>% # sort terms by beta value 
+          ggplot(aes(term, beta, fill = factor(topic))) + # plot beta by theme
+          geom_col(show.legend = FALSE) + # as a bar plot
+          facet_wrap(~ topic, scales = "free") + # which each topic in a seperate plot
+          labs(x = NULL, y = "Beta") + # no x label, change y label 
+          coord_flip() # turn bars sideways
+    }else{ 
+        # if the user does not request a plot
+        # return a list of sorted terms instead
+        return(top_terms)
+    }
+}
+```
+##Topic Modelling for **Luke**  
+
+4 topics for the **Luke**
+
+```{r}
+create_LDA_topics <- function(business_text,custom_stop_words)
+{
+  # create a document term matrix to clean
+reviewsCorpus <- Corpus(VectorSource(business_text$text)) 
+reviewsDTM <- DocumentTermMatrix(reviewsCorpus)
+
+# convert the document term matrix to a tidytext corpus
+reviewsDTM_tidy <- tidy(reviewsDTM)
+
+# remove stopwords
+reviewsDTM_tidy_cleaned <- reviewsDTM_tidy %>% # take our tidy dtm and...
+    anti_join(stop_words, by = c("term" = "word")) %>% # remove English stopwords and...
+    anti_join(custom_stop_words, by = c("term" = "word")) # remove my custom stopwords
+
+top_terms_by_topic_LDA(reviewsDTM_tidy_cleaned$term, number_of_topics = 4)
+
+}
+
+lukes = reviews %>%
+  filter(business_id == "GBTPC53ZrG1ZBY3DT8Mbcw")
+
+custom_stop_words <- tibble(word = c("luke","restaurant","food","orleans", "new orleans"))
+
+create_LDA_topics(lukes,custom_stop_words)
+```
+
+##Topic Modelling for **Prep & Pastry**
+
+4 topics for the **Prep & Pastry**
+
+```{r}
+custom_stop_words <- tibble(word = c("restaurant","food"))
+
+create_LDA_topics(prep,custom_stop_words)
+```
+
+##Topic Modelling for **Ichicoro Ramen**
+
+4 topics for the **Ichicoro Ramen**
+
+```{r}
+custom_stop_words <- tibble(word = c("ramen","ichicoro","restaurant","food"))
+
+create_LDA_topics(ramen,custom_stop_words)
+```
+
+##Topic Modelling for **El Vez**
+
+4 topics for the **El Vez**
+
+```{r}
+custom_stop_words <- tibble(word = c("el vez","brunch","restaurant","food"))
+
+create_LDA_topics(ramen,custom_stop_words)
+```
+We observe a common theme which appears across topics across the Three restaurants is **service**.The theme of **service complaints** was also very evident when we did the **sentiment analysis**       
+
+#Tuscon City Analysis      
+
+##Top Ten Business in Tuscon
+
+We have listed the Top Ten business in Tampa giving importance to the number of reviews and then to the number of stars obtained by the business.
+
+```{r}
+city_biz = business %>%
+  filter(city == "Philadelphia") %>%
+  arrange(desc(review_count),desc(stars)) %>%
+  select(name,address,review_count,stars) %>%
+  head(10)
+
+flextable(city_biz)
+```
+
+
+## Topic Modelling for **Tuscon**
+
+We do a Topic Modelling on the reviews of a sample of **Ten Thousand Words** of Tuscon.
+
+```{r}
+CityCoords = business %>%
+  filter(city == "Tuscon")
+
+city_words = inner_join(CityCoords,reviews) %>% select(date,text,review_id) %>% sample_n(10000, replace = TRUE)
+
+custom_stop_words <- tibble(word = c("restaurant","food"))
+
+create_LDA_topics(city_words,custom_stop_words)
+```
+             
+
+
+
+
+## Word Cloud of **Tuscon City**
+
+```{r}
+createWordCloud(city_words)
+```
+
+##Top Ten most common Words of the business **Tuscon City**
+
+We examine the Top Ten Most Common words and show them in a bar graph.
+
+```{r}
+city_words %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+
+
+
+
+## Sentiment Analysis - Postive and Not So Postive Words of **Tuscon City**
+
+We display the Positive and Not So Positive words used by reviewers for  `Tuscon City`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+```{r}
+positiveWordsBarGraph(city_words)
+```
+
+
+## Calculate Sentiment for the reviews
+
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+sentiment_lines = calculate_sentiment(city_words)
+
+head(sentiment_lines)
+```
+## Negative Reviews
+
+We examine the  Top Ten most negative reviews.
+
+```{r}
+display_neg_sentiments(sentiment_lines,city_words)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most postive reviews.
+
+```{r}
+display_pos_sentiments(sentiment_lines,city_words)
+```
+     
+#**Sachiko Sushi**
+
+##Word Cloud of business **Sachiko Sushi**
+
+```{r}
+sach = reviews %>%
+  filter(business_id == "lhsQkb5nhf-Kd5OvgB9MNg")
+
+createWordCloud(sach)
+```
+
+##Ten most common words used in reviews of business **Sachiko Sushi**
+
+We examine the Top Ten Most Common words and show them in a bar graph.
+
+```{r}
+reviews %>%
+  filter(business_id == "lhsQkb5nhf-Kd5OvgB9MNg") %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  filter(!word %in% c('food','restaurant')) %>%
+  count(word,sort = TRUE) %>%
+  ungroup() %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  head(10) %>%
+  
+  ggplot(aes(x = word,y = n)) +
+  geom_bar(stat='identity',colour="white", fill =fillColor) +
+  geom_text(aes(x = word, y = 1, label = paste0("(",n,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Word', y = 'Word Count', 
+       title = 'Word Count') +
+  coord_flip() + 
+  theme_bw()
+```
+
+## Sentiment Analysis - Postive and Not So Postive Words of **Sachiko Sushi**
+
+We display the Positive and Not So Positive words used by reviewers for the business `Sachiko Sushi`.We have used the **AFINN sentiment lexicon**, which provides numeric positivity scores for each word, and visualize it with a bar plot.
+
+```{r}
+positiveWordsBarGraph(reviews %>%
+                        filter(business_id == "lhsQkb5nhf-Kd5OvgB9MNg"))
+```
+
+## Calculate Sentiment for the reviews
+
+
+We calculate the sentiment scores for all the reviews using the **AFINN sentiment lexicon**. We display the Top Six sentiments here.
+
+```{r}
+sach_sushi = reviews %>%
+          filter(business_id == "lhsQkb5nhf-Kd5OvgB9MNg")
+
+sentiment_lines = calculate_sentiment(sach_sushi)
+
+head(sentiment_lines)
+```
+
+
+## Negative Reviews
+
+```{r}
+display_neg_sentiments(sentiment_lines,sach_sushi)
+```
+## Positive  Reviews
+
+We examine the  Top Ten most postive reviews.
+
+```{r}
+display_pos_sentiments(sentiment_lines,sach_sushi)
+```
+
+##Relationship among words in **Sachiko Sushi**
+
+We explore the different relationship among the various words in `Bobby Q` here through a network graph
+
+```{r}
+bigrams_restaurant <- reviews %>%
+  filter(business_id == "lhsQkb5nhf-Kd5OvgB9MNg") %>%
+  count_bigrams()
+
+bigrams_restaurant %>%
+  filter(n > 5) %>%
+  visualize_bigrams()
+```
+
+```{r}
+%md 
+
+```
+
