@@ -97,14 +97,14 @@ fillColor2 = "#F1C40F"
 
 #If you want the delta file from blob storage as dataframe
 
-# business <- read.df("dbfs:/mnt/m10pro/parquet_to_delta/business.delta", source = "delta")
-# reviews <- read.df("dbfs:/mnt/m10pro/parquet_to_delta/review.delta", source = "delta")
+# business <- read.df("path_where_business.delta_is stored", source = "delta")
+# reviews <- read.df("path_where_review.delta_is_stored", source = "delta")
 
 #If you want the delta file from blob storage as dataframe
 
-reviews_json <- stream_in(file("C:/Users/mugun/Downloads/Final Year project/yelp open source dataset/Yelp Dataset/yelp_academic_dataset_review.json"))
+reviews_json <- stream_in(file("path_where_yelp_academic_dataset_review.json_is_stored_in_local_system"))
 
-business_json <- stream_in(file("C:/Users/mugun/Downloads/Final Year project/yelp open source dataset/Yelp Dataset/yelp_academic_dataset_business.json"))
+business_json <- stream_in(file("path_where_yelp_academic_dataset_business.json_is_stored_in_local_system"))
 
 reviews <- as.data.frame(reviews_json)
 business <- as.data.frame(business_json)
