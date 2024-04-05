@@ -100,7 +100,7 @@ fillColor2 = "#F1C40F"
 # business <- read.df("path_where_business.delta_is stored", source = "delta")
 # reviews <- read.df("path_where_review.delta_is_stored", source = "delta")
 
-#If you want the delta file from blob storage as dataframe
+#If you want the data from the local storage as dataframe
 
 reviews_json <- stream_in(file("path_where_yelp_academic_dataset_review.json_is_stored_in_local_system"))
 
